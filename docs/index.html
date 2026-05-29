@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Focus Guard for Windows</title>
+    <meta
+      name="description"
+      content="Focus Guard is a local Windows app that notices when you spend too long on X/Twitter and interrupts you with a stern voice reminder."
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#">Focus Guard</a>
+      <nav aria-label="Page navigation">
+        <a href="#download">Download</a>
+        <a href="#install">Install</a>
+        <a href="#privacy">Privacy</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Windows focus tool</p>
+          <h1>Get roasted when X/Twitter steals your work time.</h1>
+          <p class="lede">
+            Focus Guard is a small local Windows app that opens when you visit X/Twitter,
+            counts your time there, and starts a stern voice reminder after one minute.
+          </p>
+          <div class="actions" id="download">
+            <a class="button primary" href="downloads/FocusGuard.zip" download>Download Focus Guard</a>
+            <a class="button secondary" href="#install">How to install</a>
+          </div>
+          <p class="note">Windows only. Mac support will need a browser extension or separate Mac app.</p>
+        </div>
+        <figure class="hero-media">
+          <img src="assets/focus-guard-window.png" alt="Focus Guard desktop app window" />
+        </figure>
+      </section>
+
+      <section class="band">
+        <div class="grid three">
+          <article class="card">
+            <h2>One-minute limit</h2>
+            <p>By default, Focus Guard starts warning after one minute on X/Twitter.</p>
+          </article>
+          <article class="card">
+            <h2>Local voice alert</h2>
+            <p>The reminder uses Windows text-to-speech and keeps going until X/Twitter is closed or left.</p>
+          </article>
+          <article class="card">
+            <h2>Optional auto-start</h2>
+            <p>A small watcher can open Focus Guard automatically when X/Twitter becomes active.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="content" id="install">
+        <div>
+          <p class="eyebrow">Install</p>
+          <h2>How to use it</h2>
+        </div>
+        <ol class="steps">
+          <li>Download and unzip <strong>FocusGuard.zip</strong>.</li>
+          <li>Open the unzipped <strong>FocusGuard</strong> folder.</li>
+          <li>Double-click <strong>Start-FocusGuard.bat</strong>.</li>
+          <li>Optional: run <strong>Install-DesktopShortcut.ps1</strong> to add a desktop icon.</li>
+          <li>Optional: run <strong>Install-AutoStart.ps1</strong> to open it automatically when X/Twitter is detected.</li>
+        </ol>
+        <p class="warning">
+          Windows may show a warning because this is an unsigned PowerShell app. Only run it if you trust the source.
+        </p>
+      </section>
+
+      <section class="content split" id="privacy">
+        <div>
+          <p class="eyebrow">Privacy</p>
+          <h2>Runs on your computer</h2>
+        </div>
+        <div class="copy">
+          <p>
+            Focus Guard does not upload data, read your browser history, or send anything to a server.
+            It checks active window and browser tab titles to identify X/Twitter.
+          </p>
+          <p>
+            The app is intentionally simple: PowerShell, Windows Forms, and Windows text-to-speech.
+            The roast script can be edited inside <strong>FocusGuard.ps1</strong>.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Focus Guard</span>
+      <a href="downloads/FocusGuard.zip" download>Download ZIP</a>
+    </footer>
+  </body>
+</html>

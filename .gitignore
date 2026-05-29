@@ -1,0 +1,6 @@
+debug-video/
+dist/
+launch-log.txt
+watcher-status.txt
+*.log
+*.tmp
