@@ -142,6 +142,13 @@ h2 {
   margin: 16px 0 0;
 }
 
+.platform-note {
+  color: var(--warn);
+  font-size: 15px;
+  font-weight: 800;
+  margin: 18px 0 0;
+}
+
 .warning {
   color: var(--warn);
   font-weight: 700;

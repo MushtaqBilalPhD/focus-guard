@@ -1,5 +1,7 @@
 # Focus Guard
 
+Focus Guard is a Windows-only app at the moment.
+
 A small local Windows desktop utility that sternly roasts you in a high-pitched, commanding voice when you spend more than the chosen time limit on X/Twitter.
 
 ## Run it
