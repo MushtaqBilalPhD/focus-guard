@@ -36,4 +36,4 @@ Focus Guard runs locally. It checks active window and browser tab titles to dete
 
 ## Editing the Roast
 
-Open `FocusGuard.ps1` and edit the `$script:RoastLines` section near the top.
+Click **Edit Roast** in the app. Write one line or paragraph per spoken chunk, with a blank line between chunks. Focus Guard saves your custom script to `roast-lines.txt`.

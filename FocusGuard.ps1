@@ -260,21 +260,24 @@ $script:AllowedAppProcesses = @(
     "x"
 )
 
-$script:RoastLines = @()
-$script:RoastLines += @'
+$script:DefaultRoastLines = @()
+$script:DefaultRoastLines += @'
 Listen here, you dusty-ass, thumb-twiddlin' motherfucker. You sittin' there on Twitter like it's your damn job, scrollin' through these bird-brained tweets like some broke fool waitin' on a stimulus check that ain't never comin'. Shut that shit down right now! Close the app, put the phone in the drawer, and get your lazy ass back to work before I come through this screen and slap the Wi-Fi out your life.
 '@
-$script:RoastLines += @'
+$script:DefaultRoastLines += @'
 You out here actin' like you the CEO of "Let Me See What These Fools Talkin' 'Bout Today." Man, please! Them notifications ain't payin' no bills, them likes ain't fillin' up your gas tank, and them retweets damn sure ain't gon' get you promoted. You got deadlines lookin' at you like "where the fuck is this clown at?" while you out here beefin' with strangers over shit that don't even concern your unemployed behind.
 '@
-$script:RoastLines += @'
+$script:DefaultRoastLines += @'
 Katt Williams told y'all before: stop playin'! You ain't changin' the world from that couch, you just changin' the brightness on your screen so you can keep doom-scrollin' in the dark like a vampire with no fangs and no future. Get off Twitter, get off Instagram, get off all that nonsense and handle your business, you hear me?
 '@
-$script:RoastLines += @'
+$script:DefaultRoastLines += @'
 The rent due, the boss lookin', your mama probably callin' askin' when you gon' stop actin' like a whole damn fool. So shut it down, stand up, and go be productive for once in your miserable little life. 'Cause right now you just a waste of good data and oxygen, baby. Now move! Before I roast you again tomorrow when you back on here doin' the same dumb shit. Word to the wise: get to work, fool. Period.
 '@
+$script:RoastLines = @($script:DefaultRoastLines)
 $script:FallbackPhrase = "Close Twitter and do the work."
 $script:RoastIndex = 0
+$script:AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$script:CustomRoastPath = Join-Path $script:AppRoot "roast-lines.txt"
 $script:IdlePauseSeconds = 30
 $script:ScrollActivitySeconds = 3
 $script:IsMonitoring = $true
@@ -529,6 +532,74 @@ function Shorten-Text {
     return $Text.Substring(0, $MaxLength - 3) + "..."
 }
 
+function Convert-TextToRoastLines {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return @()
+    }
+
+    $normalized = $Text -replace "`r`n", "`n"
+    $chunks = $normalized -split "`n\s*`n"
+
+    @($chunks |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Convert-RoastLinesToText {
+    param([string[]]$Lines)
+
+    (@($Lines) -join ("`r`n`r`n")).Trim()
+}
+
+function Load-RoastLines {
+    if (Test-Path -LiteralPath $script:CustomRoastPath) {
+        try {
+            $customText = Get-Content -LiteralPath $script:CustomRoastPath -Raw -Encoding UTF8
+            $customLines = Convert-TextToRoastLines -Text $customText
+
+            if ($customLines.Count -gt 0) {
+                $script:RoastLines = @($customLines)
+                $script:RoastIndex = 0
+                return "custom"
+            }
+        }
+        catch {
+            $script:RoastLines = @($script:DefaultRoastLines)
+            $script:RoastIndex = 0
+            return "default"
+        }
+    }
+
+    $script:RoastLines = @($script:DefaultRoastLines)
+    $script:RoastIndex = 0
+    return "default"
+}
+
+function Save-CustomRoastLines {
+    param([string]$Text)
+
+    $customLines = Convert-TextToRoastLines -Text $Text
+
+    if ($customLines.Count -eq 0) {
+        throw "Enter at least one roast line or paragraph."
+    }
+
+    Set-Content -LiteralPath $script:CustomRoastPath -Value (Convert-RoastLinesToText -Lines $customLines) -Encoding UTF8
+    $script:RoastLines = @($customLines)
+    $script:RoastIndex = 0
+}
+
+function Reset-RoastLinesToDefault {
+    if (Test-Path -LiteralPath $script:CustomRoastPath) {
+        Remove-Item -LiteralPath $script:CustomRoastPath -Force
+    }
+
+    $script:RoastLines = @($script:DefaultRoastLines)
+    $script:RoastIndex = 0
+}
+
 function Get-NextRoastLine {
     if ($script:RoastLines.Count -eq 0) {
         return $script:FallbackPhrase
@@ -587,6 +658,100 @@ function Stop-FocusSpeech {
     }
 }
 
+function Show-RoastEditor {
+    $editor = New-Object System.Windows.Forms.Form
+    $editor.Text = "Edit Roast Script"
+    $editor.StartPosition = "CenterParent"
+    $editor.FormBorderStyle = "Sizable"
+    $editor.MinimizeBox = $false
+    $editor.ClientSize = New-Object System.Drawing.Size(720, 520)
+    $editor.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+
+    $instructions = New-Object System.Windows.Forms.Label
+    $instructions.Text = "Write one roast line or paragraph per block. Use a blank line between spoken chunks."
+    $instructions.Location = New-Object System.Drawing.Point(16, 14)
+    $instructions.Size = New-Object System.Drawing.Size(680, 22)
+    [void]$editor.Controls.Add($instructions)
+
+    $textBox = New-Object System.Windows.Forms.TextBox
+    $textBox.Multiline = $true
+    $textBox.ScrollBars = "Vertical"
+    $textBox.AcceptsReturn = $true
+    $textBox.AcceptsTab = $true
+    $textBox.WordWrap = $true
+    $textBox.Location = New-Object System.Drawing.Point(18, 44)
+    $textBox.Size = New-Object System.Drawing.Size(684, 395)
+    $textBox.Anchor = "Top,Bottom,Left,Right"
+    $textBox.Text = Convert-RoastLinesToText -Lines $script:RoastLines
+    [void]$editor.Controls.Add($textBox)
+
+    $saveButton = New-Object System.Windows.Forms.Button
+    $saveButton.Text = "Save"
+    $saveButton.Location = New-Object System.Drawing.Point(414, 462)
+    $saveButton.Size = New-Object System.Drawing.Size(90, 32)
+    $saveButton.Anchor = "Bottom,Right"
+    [void]$editor.Controls.Add($saveButton)
+
+    $resetDefaultButton = New-Object System.Windows.Forms.Button
+    $resetDefaultButton.Text = "Reset Default"
+    $resetDefaultButton.Location = New-Object System.Drawing.Point(510, 462)
+    $resetDefaultButton.Size = New-Object System.Drawing.Size(110, 32)
+    $resetDefaultButton.Anchor = "Bottom,Right"
+    [void]$editor.Controls.Add($resetDefaultButton)
+
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Text = "Cancel"
+    $cancelButton.Location = New-Object System.Drawing.Point(626, 462)
+    $cancelButton.Size = New-Object System.Drawing.Size(76, 32)
+    $cancelButton.Anchor = "Bottom,Right"
+    [void]$editor.Controls.Add($cancelButton)
+
+    $saveButton.Add_Click({
+        try {
+            Save-CustomRoastLines -Text $textBox.Text
+            Stop-FocusSpeech
+            [System.Windows.Forms.MessageBox]::Show(
+                "Roast script saved. The new script will be used immediately.",
+                "Focus Guard",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            ) | Out-Null
+            $editor.Close()
+        }
+        catch {
+            [System.Windows.Forms.MessageBox]::Show(
+                $_.Exception.Message,
+                "Focus Guard",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            ) | Out-Null
+        }
+    })
+
+    $resetDefaultButton.Add_Click({
+        $confirm = [System.Windows.Forms.MessageBox]::Show(
+            "Reset the roast script to the built-in default?",
+            "Focus Guard",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Question
+        )
+
+        if ($confirm -eq [System.Windows.Forms.DialogResult]::Yes) {
+            Reset-RoastLinesToDefault
+            Stop-FocusSpeech
+            $textBox.Text = Convert-RoastLinesToText -Lines $script:RoastLines
+        }
+    })
+
+    $cancelButton.Add_Click({
+        $editor.Close()
+    })
+
+    [void]$editor.ShowDialog($form)
+}
+
+$script:RoastSource = Load-RoastLines
+
 if ($SelfTest) {
     $foreground = Get-ForegroundInfo
     $speechAvailable = $false
@@ -612,6 +777,9 @@ if ($SelfTest) {
         ActiveTitle = $foreground.Title
         TwitterWindowOpen = Test-AnyTwitterWindowOpen
         TwitterBrowserTabOpen = Test-AnyTwitterBrowserTabOpen
+        RoastSource = $script:RoastSource
+        RoastLineCount = $script:RoastLines.Count
+        CustomRoastPath = $script:CustomRoastPath
         IdleSeconds = Get-IdleSeconds
         HookScrollEvents = [FocusGuard.MouseScrollWatcher]::ScrollEvents
         RawScrollEvents = [FocusGuard.MouseScrollWatcher]::RawScrollEvents
@@ -725,6 +893,12 @@ $scrollModeCheckbox.Location = New-Object System.Drawing.Point(24, 120)
 $scrollModeCheckbox.Size = New-Object System.Drawing.Size(240, 22)
 [void]$form.Controls.Add($scrollModeCheckbox)
 
+$editRoastButton = New-Object System.Windows.Forms.Button
+$editRoastButton.Text = "Edit Roast"
+$editRoastButton.Location = New-Object System.Drawing.Point(300, 118)
+$editRoastButton.Size = New-Object System.Drawing.Size(110, 28)
+[void]$form.Controls.Add($editRoastButton)
+
 $timeLabel = New-Object System.Windows.Forms.Label
 $timeLabel.Text = "Twitter time: 00:00 / 01:00"
 $timeLabel.Location = New-Object System.Drawing.Point(22, 146)
@@ -807,6 +981,10 @@ $resetButton.Add_Click({
 
 $testButton.Add_Click({
     Invoke-FocusSpeech -Force
+})
+
+$editRoastButton.Add_Click({
+    Show-RoastEditor
 })
 
 $quitButton.Add_Click({

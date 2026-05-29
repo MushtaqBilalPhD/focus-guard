@@ -2,5 +2,6 @@ debug-video/
 dist/
 launch-log.txt
 watcher-status.txt
+roast-lines.txt
 *.log
 *.tmp

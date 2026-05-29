@@ -60,7 +60,7 @@ The watcher writes its latest status to `watcher-status.txt` in this folder.
 - The **Debug: require scroll detection** checkbox is only for testing scroll detection; leave it unchecked for normal use.
 - The diagnostics line shows whether it currently detects active X/Twitter, visible X/Twitter, recent scroll input, counting mode, and alert mode.
 - After the limit, it loops stern roast lines continuously until the X/Twitter tab or window is no longer detected, or until you pause, reset, or quit the app.
-- You can edit the roast lines near the top of `FocusGuard.ps1` in the `$script:RoastLines` list.
+- Click **Edit Roast** in the app to customize the roast script. The app saves custom text to `roast-lines.txt` next to `FocusGuard.ps1`.
 
 ## Limits
 
