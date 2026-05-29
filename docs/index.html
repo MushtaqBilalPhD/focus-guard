@@ -50,7 +50,7 @@
           </article>
           <article class="card">
             <h2>Local voice alert</h2>
-            <p>The reminder uses Windows text-to-speech and keeps going until X/Twitter is closed or left.</p>
+            <p>The reminder uses Windows text-to-speech by default and can optionally use ElevenLabs voices.</p>
           </article>
           <article class="card">
             <h2>Custom roast script</h2>
@@ -94,6 +94,9 @@
         <p class="warning">
           Windows may show a warning because this is an unsigned PowerShell app. Only run it if you trust the source.
         </p>
+        <p class="note">
+          Optional ElevenLabs voice support requires your own ElevenLabs API key and Voice ID.
+        </p>
       </section>
 
       <section class="content split" id="privacy">
@@ -103,12 +106,13 @@
         </div>
         <div class="copy">
           <p>
-            Focus Guard does not upload data, read your browser history, or send anything to a server.
+            Focus Guard does not read your browser history or capture tweets.
             It checks active window and browser tab titles to identify X/Twitter.
           </p>
           <p>
             The app is intentionally simple: PowerShell, Windows Forms, and Windows text-to-speech.
             The roast script can be customized with the built-in editor.
+            If you enable ElevenLabs voice, each roast chunk is sent to ElevenLabs once to generate cached audio.
           </p>
         </div>
       </section>

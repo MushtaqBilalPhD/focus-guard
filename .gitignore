@@ -3,5 +3,8 @@ dist/
 launch-log.txt
 watcher-status.txt
 roast-lines.txt
+focusguard-settings.json
+voice-cache/
+elevenlabs-focusguard-test.mp3
 *.log
 *.tmp

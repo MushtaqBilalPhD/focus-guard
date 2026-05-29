@@ -24,6 +24,24 @@ For a quick test, set **Limit in minutes** to `0.1`. That triggers after about s
 
 The default limit is `1` minute.
 
+## Optional ElevenLabs voice
+
+Focus Guard uses Windows text-to-speech by default. To test a more natural ElevenLabs voice:
+
+1. Save your ElevenLabs API key as a local Windows environment variable:
+
+```powershell
+setx ELEVENLABS_API_KEY "PASTE-YOUR-API-KEY-HERE"
+```
+
+2. Close and reopen PowerShell.
+3. Start Focus Guard.
+4. Check **Use ElevenLabs**.
+5. Keep the default Voice ID or paste another ElevenLabs Voice ID.
+6. Click **Save Voice**, then **Test Voice**.
+
+Generated ElevenLabs audio is cached in `voice-cache` so the same roast chunk is not regenerated every loop. The app stores the Voice ID in `focusguard-settings.json`; it does not store your API key.
+
 ## Add a desktop icon
 
 Run this once from PowerShell:
@@ -61,10 +79,13 @@ The watcher writes its latest status to `watcher-status.txt` in this folder.
 - The diagnostics line shows whether it currently detects active X/Twitter, visible X/Twitter, recent scroll input, counting mode, and alert mode.
 - After the limit, it loops stern roast lines continuously until the X/Twitter tab or window is no longer detected, or until you pause, reset, or quit the app.
 - Click **Edit Roast** in the app to customize the roast script. The app saves custom text to `roast-lines.txt` next to `FocusGuard.ps1`.
+- If **Use ElevenLabs** is enabled, Focus Guard sends each roast chunk to ElevenLabs once to create an MP3, then reuses the cached file.
 
 ## Limits
 
 This is intentionally simple and local. It does not read browser history or log page content. It mainly relies on browser window and tab titles, so it may miss X/Twitter if your browser title does not include `Twitter`, `x.com`, or a title like `Home / X - Google Chrome`.
+
+By default, Focus Guard does not upload anything. If you enable ElevenLabs voice, the roast text is sent to ElevenLabs for speech generation.
 
 If it misses your browser, open X/Twitter, look at the app's "Active window" line, and add that wording to the detection patterns in `FocusGuard.ps1`.
 

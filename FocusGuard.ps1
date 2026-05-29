@@ -278,12 +278,24 @@ $script:FallbackPhrase = "Close Twitter and do the work."
 $script:RoastIndex = 0
 $script:AppRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:CustomRoastPath = Join-Path $script:AppRoot "roast-lines.txt"
+$script:SettingsPath = Join-Path $script:AppRoot "focusguard-settings.json"
+$script:VoiceCacheRoot = Join-Path $script:AppRoot "voice-cache"
+$script:DefaultElevenLabsVoiceId = "21m00Tcm4TlvDq8ikWAM"
+$script:DefaultElevenLabsModelId = "eleven_flash_v2_5"
+$script:VoiceSettings = [ordered]@{
+    UseElevenLabs = $false
+    ElevenLabsVoiceId = $script:DefaultElevenLabsVoiceId
+    ElevenLabsModelId = $script:DefaultElevenLabsModelId
+}
 $script:IdlePauseSeconds = 30
 $script:ScrollActivitySeconds = 3
 $script:IsMonitoring = $true
 $script:ElapsedSeconds = 0
 $script:IsAlerting = $false
 $script:Synth = $null
+$script:ElevenLabsPlayer = $null
+$script:ElevenLabsFailureUntil = [datetime]::MinValue
+$script:LastVoiceError = ""
 $script:InstanceMutex = $null
 
 function Get-ForegroundInfo {
@@ -610,6 +622,234 @@ function Get-NextRoastLine {
     return $line
 }
 
+function Load-VoiceSettings {
+    if (-not (Test-Path -LiteralPath $script:SettingsPath)) {
+        return
+    }
+
+    try {
+        $settingsJson = Get-Content -LiteralPath $script:SettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $propertyNames = @($settingsJson.PSObject.Properties.Name)
+
+        if ($propertyNames -contains "UseElevenLabs") {
+            $script:VoiceSettings.UseElevenLabs = [bool]$settingsJson.UseElevenLabs
+        }
+
+        if (($propertyNames -contains "ElevenLabsVoiceId") -and -not [string]::IsNullOrWhiteSpace($settingsJson.ElevenLabsVoiceId)) {
+            $script:VoiceSettings.ElevenLabsVoiceId = [string]$settingsJson.ElevenLabsVoiceId
+        }
+
+        if (($propertyNames -contains "ElevenLabsModelId") -and -not [string]::IsNullOrWhiteSpace($settingsJson.ElevenLabsModelId)) {
+            $script:VoiceSettings.ElevenLabsModelId = [string]$settingsJson.ElevenLabsModelId
+        }
+    }
+    catch {
+        $script:VoiceSettings.UseElevenLabs = $false
+        $script:LastVoiceError = "Could not read focusguard-settings.json. Using Windows voice."
+    }
+}
+
+function Save-VoiceSettings {
+    $settingsJson = $script:VoiceSettings | ConvertTo-Json -Depth 5
+    Set-Content -LiteralPath $script:SettingsPath -Value $settingsJson -Encoding UTF8
+}
+
+function Get-ElevenLabsApiKey {
+    $apiKey = $env:ELEVENLABS_API_KEY
+
+    if ([string]::IsNullOrWhiteSpace($apiKey)) {
+        $apiKey = [Environment]::GetEnvironmentVariable("ELEVENLABS_API_KEY", "User")
+    }
+
+    if ([string]::IsNullOrWhiteSpace($apiKey)) {
+        $apiKey = [Environment]::GetEnvironmentVariable("ELEVENLABS_API_KEY", "Machine")
+    }
+
+    if ([string]::IsNullOrWhiteSpace($apiKey)) {
+        return ""
+    }
+
+    return $apiKey.Trim()
+}
+
+function Test-ElevenLabsReady {
+    if (-not $script:VoiceSettings.UseElevenLabs) {
+        return $false
+    }
+
+    if ((Get-Date) -lt $script:ElevenLabsFailureUntil) {
+        return $false
+    }
+
+    if ([string]::IsNullOrWhiteSpace($script:VoiceSettings.ElevenLabsVoiceId)) {
+        $script:LastVoiceError = "ElevenLabs voice ID is empty."
+        return $false
+    }
+
+    if ([string]::IsNullOrWhiteSpace((Get-ElevenLabsApiKey))) {
+        $script:LastVoiceError = "ELEVENLABS_API_KEY is not set."
+        return $false
+    }
+
+    return $true
+}
+
+function Get-StringSha256 {
+    param([string]$Text)
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        return (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "")
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-ElevenLabsCachePath {
+    param([string]$Message)
+
+    $voiceId = $script:VoiceSettings.ElevenLabsVoiceId.Trim()
+    $modelId = $script:VoiceSettings.ElevenLabsModelId.Trim()
+    $hashInput = "$voiceId`n$modelId`n$Message"
+    $hash = Get-StringSha256 -Text $hashInput
+    Join-Path $script:VoiceCacheRoot "$hash.mp3"
+}
+
+function Get-WebErrorMessage {
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    if ($null -ne $ErrorRecord.Exception.Response) {
+        try {
+            $reader = New-Object System.IO.StreamReader($ErrorRecord.Exception.Response.GetResponseStream())
+            return $reader.ReadToEnd()
+        }
+        catch {
+            return $ErrorRecord.Exception.Message
+        }
+    }
+
+    return $ErrorRecord.Exception.Message
+}
+
+function Get-ElevenLabsAudioFile {
+    param([string]$Message)
+
+    if (-not (Test-Path -LiteralPath $script:VoiceCacheRoot)) {
+        [void](New-Item -ItemType Directory -Path $script:VoiceCacheRoot -Force)
+    }
+
+    $cachePath = Get-ElevenLabsCachePath -Message $Message
+    if (Test-Path -LiteralPath $cachePath) {
+        return $cachePath
+    }
+
+    $apiKey = Get-ElevenLabsApiKey
+    if ([string]::IsNullOrWhiteSpace($apiKey)) {
+        throw "ELEVENLABS_API_KEY is not set."
+    }
+
+    $voiceId = $script:VoiceSettings.ElevenLabsVoiceId.Trim()
+    $modelId = $script:VoiceSettings.ElevenLabsModelId.Trim()
+    if ([string]::IsNullOrWhiteSpace($modelId)) {
+        $modelId = $script:DefaultElevenLabsModelId
+    }
+
+    $body = @{
+        text = $Message
+        model_id = $modelId
+        voice_settings = @{
+            stability = 0.35
+            similarity_boost = 0.85
+            use_speaker_boost = $true
+        }
+    } | ConvertTo-Json -Depth 5
+
+    $temporaryPath = "$cachePath.tmp"
+    if (Test-Path -LiteralPath $temporaryPath) {
+        Remove-Item -LiteralPath $temporaryPath -Force
+    }
+
+    try {
+        Invoke-WebRequest `
+            -Uri "https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128" `
+            -Method POST `
+            -Headers @{
+                "xi-api-key" = $apiKey
+                "Content-Type" = "application/json"
+                "Accept" = "audio/mpeg"
+            } `
+            -Body $body `
+            -OutFile $temporaryPath `
+            -ErrorAction Stop
+
+        Move-Item -LiteralPath $temporaryPath -Destination $cachePath -Force
+        return $cachePath
+    }
+    catch {
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+
+        throw (Get-WebErrorMessage -ErrorRecord $_)
+    }
+}
+
+function Test-ElevenLabsPlayerBusy {
+    if ($null -eq $script:ElevenLabsPlayer) {
+        return $false
+    }
+
+    try {
+        $state = [int]$script:ElevenLabsPlayer.playState
+        return @(
+            3, # Playing
+            6, # Buffering
+            7, # Waiting
+            8, # Media ended but still transitioning
+            9  # Preparing new media
+        ) -contains $state
+    }
+    catch {
+        return $false
+    }
+}
+
+function Start-ElevenLabsAudio {
+    param([string]$Path)
+
+    if ($null -eq $script:ElevenLabsPlayer) {
+        $script:ElevenLabsPlayer = New-Object -ComObject WMPlayer.OCX
+        $script:ElevenLabsPlayer.settings.volume = 100
+    }
+
+    $script:ElevenLabsPlayer.URL = $Path
+    $script:ElevenLabsPlayer.controls.play()
+}
+
+function Invoke-ElevenLabsSpeech {
+    param(
+        [switch]$Force,
+        [string]$Message
+    )
+
+    if ($Force -and $null -ne $script:ElevenLabsPlayer) {
+        try { $script:ElevenLabsPlayer.controls.stop() } catch {}
+    }
+
+    if (-not $Force -and (Test-ElevenLabsPlayerBusy)) {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        $Message = Get-NextRoastLine
+    }
+
+    $audioPath = Get-ElevenLabsAudioFile -Message $Message
+    Start-ElevenLabsAudio -Path $audioPath
+}
+
 function New-SpeechSsml {
     param([string]$Message)
 
@@ -623,8 +863,11 @@ function New-SpeechSsml {
 "@
 }
 
-function Invoke-FocusSpeech {
-    param([switch]$Force)
+function Invoke-WindowsSpeech {
+    param(
+        [switch]$Force,
+        [string]$Message
+    )
 
     try {
         if ($null -eq $script:Synth) {
@@ -638,12 +881,15 @@ function Invoke-FocusSpeech {
         }
 
         if ($script:Synth.State -ne [System.Speech.Synthesis.SynthesizerState]::Speaking) {
-            $message = Get-NextRoastLine
+            if ([string]::IsNullOrWhiteSpace($Message)) {
+                $Message = Get-NextRoastLine
+            }
+
             try {
-                [void]$script:Synth.SpeakSsmlAsync((New-SpeechSsml -Message $message))
+                [void]$script:Synth.SpeakSsmlAsync((New-SpeechSsml -Message $Message))
             }
             catch {
-                [void]$script:Synth.SpeakAsync($message)
+                [void]$script:Synth.SpeakAsync($Message)
             }
         }
     }
@@ -652,10 +898,58 @@ function Invoke-FocusSpeech {
     }
 }
 
+function Invoke-FocusSpeech {
+    param(
+        [switch]$Force,
+        [string]$Message
+    )
+
+    if (Test-ElevenLabsReady) {
+        try {
+            if ($Force -and $null -ne $script:Synth) {
+                $script:Synth.SpeakAsyncCancelAll()
+            }
+
+            Invoke-ElevenLabsSpeech -Force:$Force -Message $Message
+            $script:LastVoiceError = ""
+            return
+        }
+        catch {
+            $script:LastVoiceError = $_.Exception.Message
+            $script:ElevenLabsFailureUntil = (Get-Date).AddSeconds(30)
+        }
+    }
+
+    Invoke-WindowsSpeech -Force:$Force -Message $Message
+}
+
 function Stop-FocusSpeech {
     if ($null -ne $script:Synth) {
         $script:Synth.SpeakAsyncCancelAll()
     }
+
+    if ($null -ne $script:ElevenLabsPlayer) {
+        try {
+            $script:ElevenLabsPlayer.controls.stop()
+        }
+        catch {}
+    }
+}
+
+function Get-VoiceStatusText {
+    if ($script:VoiceSettings.UseElevenLabs) {
+        if ([string]::IsNullOrWhiteSpace((Get-ElevenLabsApiKey))) {
+            return "Voice: ElevenLabs missing API key"
+        }
+
+        if ((Get-Date) -lt $script:ElevenLabsFailureUntil) {
+            return "Voice: Windows fallback after ElevenLabs error"
+        }
+
+        return "Voice: ElevenLabs"
+    }
+
+    return "Voice: Windows stern roast loop"
 }
 
 function Show-RoastEditor {
@@ -751,6 +1045,7 @@ function Show-RoastEditor {
 }
 
 $script:RoastSource = Load-RoastLines
+Load-VoiceSettings
 
 if ($SelfTest) {
     $foreground = Get-ForegroundInfo
@@ -780,6 +1075,11 @@ if ($SelfTest) {
         RoastSource = $script:RoastSource
         RoastLineCount = $script:RoastLines.Count
         CustomRoastPath = $script:CustomRoastPath
+        SettingsPath = $script:SettingsPath
+        VoiceMode = $(if ($script:VoiceSettings.UseElevenLabs) { "ElevenLabs" } else { "Windows" })
+        ElevenLabsVoiceId = $script:VoiceSettings.ElevenLabsVoiceId
+        ElevenLabsApiKeyAvailable = -not [string]::IsNullOrWhiteSpace((Get-ElevenLabsApiKey))
+        VoiceCacheRoot = $script:VoiceCacheRoot
         IdleSeconds = Get-IdleSeconds
         HookScrollEvents = [FocusGuard.MouseScrollWatcher]::ScrollEvents
         RawScrollEvents = [FocusGuard.MouseScrollWatcher]::RawScrollEvents
@@ -840,7 +1140,7 @@ $form.Text = "Focus Guard"
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
-$form.ClientSize = New-Object System.Drawing.Size(460, 370)
+$form.ClientSize = New-Object System.Drawing.Size(540, 430)
 $form.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 
 if ($Minimized) {
@@ -853,13 +1153,13 @@ $titleLabel = New-Object System.Windows.Forms.Label
 $titleLabel.Text = "Focus Guard"
 $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)
 $titleLabel.Location = New-Object System.Drawing.Point(18, 14)
-$titleLabel.Size = New-Object System.Drawing.Size(420, 30)
+$titleLabel.Size = New-Object System.Drawing.Size(500, 30)
 [void]$form.Controls.Add($titleLabel)
 
 $statusLabel = New-Object System.Windows.Forms.Label
 $statusLabel.Text = "Watching for X/Twitter"
 $statusLabel.Location = New-Object System.Drawing.Point(21, 52)
-$statusLabel.Size = New-Object System.Drawing.Size(410, 22)
+$statusLabel.Size = New-Object System.Drawing.Size(490, 22)
 $statusLabel.ForeColor = [System.Drawing.Color]::DarkSlateGray
 [void]$form.Controls.Add($statusLabel)
 
@@ -880,9 +1180,9 @@ $limitInput.Size = New-Object System.Drawing.Size(70, 24)
 [void]$form.Controls.Add($limitInput)
 
 $voiceLabel = New-Object System.Windows.Forms.Label
-$voiceLabel.Text = "Voice: stern roast loop"
+$voiceLabel.Text = Get-VoiceStatusText
 $voiceLabel.Location = New-Object System.Drawing.Point(240, 92)
-$voiceLabel.Size = New-Object System.Drawing.Size(200, 22)
+$voiceLabel.Size = New-Object System.Drawing.Size(280, 22)
 $voiceLabel.ForeColor = [System.Drawing.Color]::DarkSlateGray
 [void]$form.Controls.Add($voiceLabel)
 
@@ -895,19 +1195,38 @@ $scrollModeCheckbox.Size = New-Object System.Drawing.Size(240, 22)
 
 $editRoastButton = New-Object System.Windows.Forms.Button
 $editRoastButton.Text = "Edit Roast"
-$editRoastButton.Location = New-Object System.Drawing.Point(300, 118)
+$editRoastButton.Location = New-Object System.Drawing.Point(408, 118)
 $editRoastButton.Size = New-Object System.Drawing.Size(110, 28)
 [void]$form.Controls.Add($editRoastButton)
 
+$elevenLabsCheckbox = New-Object System.Windows.Forms.CheckBox
+$elevenLabsCheckbox.Text = "Use ElevenLabs"
+$elevenLabsCheckbox.Checked = [bool]$script:VoiceSettings.UseElevenLabs
+$elevenLabsCheckbox.Location = New-Object System.Drawing.Point(24, 152)
+$elevenLabsCheckbox.Size = New-Object System.Drawing.Size(132, 22)
+[void]$form.Controls.Add($elevenLabsCheckbox)
+
+$voiceIdInput = New-Object System.Windows.Forms.TextBox
+$voiceIdInput.Text = $script:VoiceSettings.ElevenLabsVoiceId
+$voiceIdInput.Location = New-Object System.Drawing.Point(162, 150)
+$voiceIdInput.Size = New-Object System.Drawing.Size(250, 24)
+[void]$form.Controls.Add($voiceIdInput)
+
+$saveVoiceButton = New-Object System.Windows.Forms.Button
+$saveVoiceButton.Text = "Save Voice"
+$saveVoiceButton.Location = New-Object System.Drawing.Point(424, 148)
+$saveVoiceButton.Size = New-Object System.Drawing.Size(94, 28)
+[void]$form.Controls.Add($saveVoiceButton)
+
 $timeLabel = New-Object System.Windows.Forms.Label
 $timeLabel.Text = "Twitter time: 00:00 / 01:00"
-$timeLabel.Location = New-Object System.Drawing.Point(22, 146)
-$timeLabel.Size = New-Object System.Drawing.Size(410, 22)
+$timeLabel.Location = New-Object System.Drawing.Point(22, 186)
+$timeLabel.Size = New-Object System.Drawing.Size(490, 22)
 [void]$form.Controls.Add($timeLabel)
 
 $progress = New-Object System.Windows.Forms.ProgressBar
-$progress.Location = New-Object System.Drawing.Point(24, 172)
-$progress.Size = New-Object System.Drawing.Size(413, 18)
+$progress.Location = New-Object System.Drawing.Point(24, 212)
+$progress.Size = New-Object System.Drawing.Size(493, 18)
 $progress.Minimum = 0
 $progress.Maximum = 1000
 $progress.Value = 0
@@ -915,46 +1234,83 @@ $progress.Value = 0
 
 $scrollLabel = New-Object System.Windows.Forms.Label
 $scrollLabel.Text = "Scroll input: waiting..."
-$scrollLabel.Location = New-Object System.Drawing.Point(22, 204)
-$scrollLabel.Size = New-Object System.Drawing.Size(415, 22)
+$scrollLabel.Location = New-Object System.Drawing.Point(22, 244)
+$scrollLabel.Size = New-Object System.Drawing.Size(495, 22)
 [void]$form.Controls.Add($scrollLabel)
 
 $activeLabel = New-Object System.Windows.Forms.Label
 $activeLabel.Text = "Active window: waiting..."
-$activeLabel.Location = New-Object System.Drawing.Point(22, 232)
-$activeLabel.Size = New-Object System.Drawing.Size(415, 38)
+$activeLabel.Location = New-Object System.Drawing.Point(22, 272)
+$activeLabel.Size = New-Object System.Drawing.Size(495, 38)
 [void]$form.Controls.Add($activeLabel)
 
 $diagnosticLabel = New-Object System.Windows.Forms.Label
 $diagnosticLabel.Text = "Diagnostics: waiting..."
-$diagnosticLabel.Location = New-Object System.Drawing.Point(22, 272)
-$diagnosticLabel.Size = New-Object System.Drawing.Size(415, 42)
+$diagnosticLabel.Location = New-Object System.Drawing.Point(22, 314)
+$diagnosticLabel.Size = New-Object System.Drawing.Size(495, 54)
 $diagnosticLabel.ForeColor = [System.Drawing.Color]::DimGray
 [void]$form.Controls.Add($diagnosticLabel)
 
 $pauseButton = New-Object System.Windows.Forms.Button
 $pauseButton.Text = "Pause"
-$pauseButton.Location = New-Object System.Drawing.Point(24, 326)
+$pauseButton.Location = New-Object System.Drawing.Point(24, 384)
 $pauseButton.Size = New-Object System.Drawing.Size(90, 30)
 [void]$form.Controls.Add($pauseButton)
 
 $resetButton = New-Object System.Windows.Forms.Button
 $resetButton.Text = "Reset"
-$resetButton.Location = New-Object System.Drawing.Point(124, 326)
+$resetButton.Location = New-Object System.Drawing.Point(124, 384)
 $resetButton.Size = New-Object System.Drawing.Size(90, 30)
 [void]$form.Controls.Add($resetButton)
 
 $testButton = New-Object System.Windows.Forms.Button
 $testButton.Text = "Test Voice"
-$testButton.Location = New-Object System.Drawing.Point(224, 326)
+$testButton.Location = New-Object System.Drawing.Point(224, 384)
 $testButton.Size = New-Object System.Drawing.Size(100, 30)
 [void]$form.Controls.Add($testButton)
 
 $quitButton = New-Object System.Windows.Forms.Button
 $quitButton.Text = "Quit"
-$quitButton.Location = New-Object System.Drawing.Point(347, 326)
+$quitButton.Location = New-Object System.Drawing.Point(427, 384)
 $quitButton.Size = New-Object System.Drawing.Size(90, 30)
 [void]$form.Controls.Add($quitButton)
+
+function Save-VoiceControls {
+    param([switch]$ShowConfirmation)
+
+    try {
+        $voiceId = $voiceIdInput.Text.Trim()
+        if ([string]::IsNullOrWhiteSpace($voiceId)) {
+            $voiceId = $script:DefaultElevenLabsVoiceId
+            $voiceIdInput.Text = $voiceId
+        }
+
+        $script:VoiceSettings.UseElevenLabs = [bool]$elevenLabsCheckbox.Checked
+        $script:VoiceSettings.ElevenLabsVoiceId = $voiceId
+        $script:VoiceSettings.ElevenLabsModelId = $script:DefaultElevenLabsModelId
+        $script:ElevenLabsFailureUntil = [datetime]::MinValue
+        $script:LastVoiceError = ""
+        Save-VoiceSettings
+        $voiceLabel.Text = Get-VoiceStatusText
+
+        if ($ShowConfirmation) {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Voice settings saved. Focus Guard stores the Voice ID locally, but never stores your ElevenLabs API key.",
+                "Focus Guard",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            ) | Out-Null
+        }
+    }
+    catch {
+        [System.Windows.Forms.MessageBox]::Show(
+            $_.Exception.Message,
+            "Focus Guard",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        ) | Out-Null
+    }
+}
 
 $pauseButton.Add_Click({
     $script:IsMonitoring = -not $script:IsMonitoring
@@ -979,8 +1335,21 @@ $resetButton.Add_Click({
     Stop-FocusSpeech
 })
 
+$elevenLabsCheckbox.Add_CheckedChanged({
+    Save-VoiceControls
+})
+
+$saveVoiceButton.Add_Click({
+    Save-VoiceControls -ShowConfirmation
+})
+
 $testButton.Add_Click({
-    Invoke-FocusSpeech -Force
+    Save-VoiceControls
+    Invoke-FocusSpeech -Force -Message "Close Twitter now. You have work to do. This is Focus Guard speaking."
+
+    if (-not [string]::IsNullOrWhiteSpace($script:LastVoiceError)) {
+        $voiceLabel.Text = Get-VoiceStatusText
+    }
 })
 
 $editRoastButton.Add_Click({
@@ -994,6 +1363,7 @@ $quitButton.Add_Click({
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 1000
 $timer.Add_Tick({
+    $voiceLabel.Text = Get-VoiceStatusText
     $limitSeconds = [math]::Max(1, [int][math]::Round(([double]$limitInput.Value) * 60))
     $requireScroll = $scrollModeCheckbox.Checked
     $timeLabelPrefix = $(if ($requireScroll) { "Scrolling time" } else { "Twitter time" })
@@ -1019,6 +1389,9 @@ $timer.Add_Tick({
     $trackingTwitter = $(if ($requireScroll) { $twitterWindowOpen } else { $twitterContextActive })
     $countingNow = $trackingTwitter -and (-not $requireScroll -or $recentScroll)
     $diagnosticLabel.Text = "Diagnostics: active X=$onTwitter | visible X=$twitterWindowOpen | FG=$focusGuardIsForeground | recent scroll=$recentScroll | count=$countingNow | alert=$($script:IsAlerting)"
+    if (-not [string]::IsNullOrWhiteSpace($script:LastVoiceError)) {
+        $diagnosticLabel.Text = "Diagnostics: voice fallback active. $($script:LastVoiceError)"
+    }
 
     if ($countingNow) {
         $script:ElapsedSeconds += 1
@@ -1113,6 +1486,14 @@ $form.Add_FormClosed({
 
     if ($null -ne $script:Synth) {
         $script:Synth.Dispose()
+    }
+
+    if ($null -ne $script:ElevenLabsPlayer) {
+        try {
+            $script:ElevenLabsPlayer.close()
+            [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($script:ElevenLabsPlayer)
+        }
+        catch {}
     }
 
     if ($null -ne $script:InstanceMutex) {
