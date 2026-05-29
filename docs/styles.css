@@ -168,6 +168,31 @@ h2 {
   padding: 44px clamp(20px, 5vw, 72px);
 }
 
+.demo {
+  padding: 72px clamp(20px, 5vw, 72px);
+}
+
+.section-heading {
+  max-width: 760px;
+}
+
+.section-heading p:not(.eyebrow) {
+  color: var(--muted);
+  font-size: 18px;
+  margin: 16px 0 0;
+}
+
+.demo-video {
+  aspect-ratio: 16 / 9;
+  background: #111;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: block;
+  margin-top: 30px;
+  width: 100%;
+}
+
 .grid {
   display: grid;
   gap: 18px;
