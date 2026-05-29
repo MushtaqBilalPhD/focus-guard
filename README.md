@@ -36,7 +36,7 @@ setx ELEVENLABS_API_KEY "PASTE-YOUR-API-KEY-HERE"
 
 2. Close and reopen PowerShell.
 3. Start Focus Guard.
-4. Check **Use ElevenLabs**.
+4. Select **ElevenLabs**.
 5. Keep the default Voice ID or paste another ElevenLabs Voice ID.
 6. Click **Save Voice**, then **Test Voice**.
 
@@ -79,7 +79,7 @@ The watcher writes its latest status to `watcher-status.txt` in this folder.
 - The diagnostics line shows whether it currently detects active X/Twitter, visible X/Twitter, recent scroll input, counting mode, and alert mode.
 - After the limit, it loops stern roast lines continuously until the X/Twitter tab or window is no longer detected, or until you pause, reset, or quit the app.
 - Click **Edit Roast** in the app to customize the roast script. The app saves custom text to `roast-lines.txt` next to `FocusGuard.ps1`.
-- If **Use ElevenLabs** is enabled, Focus Guard sends each roast chunk to ElevenLabs once to create an MP3, then reuses the cached file.
+- If **ElevenLabs** voice is selected, Focus Guard sends each roast chunk to ElevenLabs once to create an MP3, then reuses the cached file.
 
 ## Limits
 

@@ -906,7 +906,7 @@ function Invoke-FocusSpeech {
 
     if (Test-ElevenLabsReady) {
         try {
-            if ($Force -and $null -ne $script:Synth) {
+            if ($null -ne $script:Synth) {
                 $script:Synth.SpeakAsyncCancelAll()
             }
 
@@ -918,6 +918,13 @@ function Invoke-FocusSpeech {
             $script:LastVoiceError = $_.Exception.Message
             $script:ElevenLabsFailureUntil = (Get-Date).AddSeconds(30)
         }
+    }
+
+    if ($null -ne $script:ElevenLabsPlayer) {
+        try {
+            $script:ElevenLabsPlayer.controls.stop()
+        }
+        catch {}
     }
 
     Invoke-WindowsSpeech -Force:$Force -Message $Message
@@ -1199,17 +1206,24 @@ $editRoastButton.Location = New-Object System.Drawing.Point(408, 118)
 $editRoastButton.Size = New-Object System.Drawing.Size(110, 28)
 [void]$form.Controls.Add($editRoastButton)
 
-$elevenLabsCheckbox = New-Object System.Windows.Forms.CheckBox
-$elevenLabsCheckbox.Text = "Use ElevenLabs"
-$elevenLabsCheckbox.Checked = [bool]$script:VoiceSettings.UseElevenLabs
-$elevenLabsCheckbox.Location = New-Object System.Drawing.Point(24, 152)
-$elevenLabsCheckbox.Size = New-Object System.Drawing.Size(132, 22)
-[void]$form.Controls.Add($elevenLabsCheckbox)
+$windowsVoiceRadio = New-Object System.Windows.Forms.RadioButton
+$windowsVoiceRadio.Text = "Windows voice"
+$windowsVoiceRadio.Checked = -not [bool]$script:VoiceSettings.UseElevenLabs
+$windowsVoiceRadio.Location = New-Object System.Drawing.Point(24, 152)
+$windowsVoiceRadio.Size = New-Object System.Drawing.Size(120, 22)
+[void]$form.Controls.Add($windowsVoiceRadio)
+
+$elevenLabsVoiceRadio = New-Object System.Windows.Forms.RadioButton
+$elevenLabsVoiceRadio.Text = "ElevenLabs"
+$elevenLabsVoiceRadio.Checked = [bool]$script:VoiceSettings.UseElevenLabs
+$elevenLabsVoiceRadio.Location = New-Object System.Drawing.Point(150, 152)
+$elevenLabsVoiceRadio.Size = New-Object System.Drawing.Size(95, 22)
+[void]$form.Controls.Add($elevenLabsVoiceRadio)
 
 $voiceIdInput = New-Object System.Windows.Forms.TextBox
 $voiceIdInput.Text = $script:VoiceSettings.ElevenLabsVoiceId
-$voiceIdInput.Location = New-Object System.Drawing.Point(162, 150)
-$voiceIdInput.Size = New-Object System.Drawing.Size(250, 24)
+$voiceIdInput.Location = New-Object System.Drawing.Point(250, 150)
+$voiceIdInput.Size = New-Object System.Drawing.Size(162, 24)
 [void]$form.Controls.Add($voiceIdInput)
 
 $saveVoiceButton = New-Object System.Windows.Forms.Button
@@ -1275,6 +1289,13 @@ $quitButton.Location = New-Object System.Drawing.Point(427, 384)
 $quitButton.Size = New-Object System.Drawing.Size(90, 30)
 [void]$form.Controls.Add($quitButton)
 
+function Update-VoiceControlsState {
+    $usingElevenLabs = [bool]$elevenLabsVoiceRadio.Checked
+    $voiceIdInput.Enabled = $usingElevenLabs
+    $saveVoiceButton.Enabled = $usingElevenLabs
+    $voiceLabel.Text = Get-VoiceStatusText
+}
+
 function Save-VoiceControls {
     param([switch]$ShowConfirmation)
 
@@ -1285,13 +1306,18 @@ function Save-VoiceControls {
             $voiceIdInput.Text = $voiceId
         }
 
-        $script:VoiceSettings.UseElevenLabs = [bool]$elevenLabsCheckbox.Checked
+        $oldUseElevenLabs = [bool]$script:VoiceSettings.UseElevenLabs
+        $script:VoiceSettings.UseElevenLabs = [bool]$elevenLabsVoiceRadio.Checked
         $script:VoiceSettings.ElevenLabsVoiceId = $voiceId
         $script:VoiceSettings.ElevenLabsModelId = $script:DefaultElevenLabsModelId
         $script:ElevenLabsFailureUntil = [datetime]::MinValue
         $script:LastVoiceError = ""
+        if ($oldUseElevenLabs -ne [bool]$script:VoiceSettings.UseElevenLabs) {
+            Stop-FocusSpeech
+        }
+
         Save-VoiceSettings
-        $voiceLabel.Text = Get-VoiceStatusText
+        Update-VoiceControlsState
 
         if ($ShowConfirmation) {
             [System.Windows.Forms.MessageBox]::Show(
@@ -1311,6 +1337,8 @@ function Save-VoiceControls {
         ) | Out-Null
     }
 }
+
+Update-VoiceControlsState
 
 $pauseButton.Add_Click({
     $script:IsMonitoring = -not $script:IsMonitoring
@@ -1335,8 +1363,16 @@ $resetButton.Add_Click({
     Stop-FocusSpeech
 })
 
-$elevenLabsCheckbox.Add_CheckedChanged({
-    Save-VoiceControls
+$windowsVoiceRadio.Add_CheckedChanged({
+    if ($windowsVoiceRadio.Checked) {
+        Save-VoiceControls
+    }
+})
+
+$elevenLabsVoiceRadio.Add_CheckedChanged({
+    if ($elevenLabsVoiceRadio.Checked) {
+        Save-VoiceControls
+    }
 })
 
 $saveVoiceButton.Add_Click({
